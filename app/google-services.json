@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "510867683857",
+    "project_id": "wheremything-47fa4",
+    "storage_bucket": "wheremything-47fa4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:510867683857:android:ce06974a5f727da5f88fb0",
+        "android_client_info": {
+          "package_name": "com.example.wheremythings"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBd6wm-3cQ3326j6HX9ySUxvLdCa4Donco"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
