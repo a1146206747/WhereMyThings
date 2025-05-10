@@ -38,7 +38,8 @@ public class ProfileActivity extends AppCompatActivity {
         reportBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                passUserData();
+                Intent intent = new Intent(ProfileActivity.this, ReportActivity.class);
+                startActivity(intent);
             }
         });
     }

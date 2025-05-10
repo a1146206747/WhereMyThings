@@ -27,21 +27,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_profile);
 
-        profileName = findViewById(R.id.profileName);
-        profileEmail = findViewById(R.id.profileEmail);
-        profileUsername = findViewById(R.id.profilePhone);
-        titleName = findViewById(R.id.titleName);
-        titleUsername = findViewById(R.id.titleUsername);
-        editProfile = findViewById(R.id.editButton);
-
-        showAllUserData();
-
-        editProfile.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                passUserData();
-            }
-        });
     }
 
     public void showAllUserData() {

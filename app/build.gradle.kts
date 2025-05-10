@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.firebase.database)
     implementation(libs.firebase.auth)
+    implementation(libs.firebase.storage)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -70,6 +71,11 @@ dependencies {
     implementation("androidx.cardview:cardview:1.0.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation ("com.google.firebase:firebase-database:21.0.0")
+
+    implementation ("org.tensorflow:tensorflow-lite:2.13.0")
+    implementation ("org.tensorflow:tensorflow-lite-support:0.4.3")
+    implementation ("org.tensorflow:tensorflow-lite-gpu:2.13.0")
+
 
 
 }
