@@ -21,8 +21,11 @@ import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.google.firebase.storage.UploadTask;
@@ -37,6 +40,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -137,13 +141,17 @@ public class ReportActivity extends AppCompatActivity {
 
         try {
             String prediction = classifyImage(ReportActivity.this, selectedBitmap);
+            float[] embedding = extractEmbedding(ReportActivity.this, selectedBitmap);
             Toast.makeText(ReportActivity.this, "AI 判斷結果: " + prediction, Toast.LENGTH_SHORT).show();
-        } catch (IOException e) {
-            Toast.makeText(ReportActivity.this, "模型分類失敗: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
 
-        uploadImageToFirebaseStorage(reportType, location, description, uid);
+            // 🔁 一併傳入 classification 結果與 embedding
+            uploadImageToFirebaseStorage(prediction, reportType, location, description, uid, embedding);
+
+        } catch (IOException e) {
+            Toast.makeText(ReportActivity.this, "模型處理失敗: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
+
 
     private String classifyImage(Context context, Bitmap bitmap) throws IOException {
         Log.d("TFLite", "Loading model...");
@@ -193,46 +201,47 @@ public class ReportActivity extends AppCompatActivity {
     }
 
 
-    private void uploadImageToFirebaseStorage(String reportType, String location, String description, String uid) {
+    private void uploadImageToFirebaseStorage(String predictedClass, String reportType, String location, String description, String uid, float[] embedding) {
         String imageFileName = "images/" + System.currentTimeMillis() + ".jpg";
         StorageReference imageRef = storageReference.child(imageFileName);
 
         imageRef.putFile(selectedImageUri)
-                .addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
-                    @Override
-                    public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
-                        imageRef.getDownloadUrl().addOnSuccessListener(new OnSuccessListener<Uri>() {
-                            @Override
-                            public void onSuccess(Uri uri) {
-                                String imageUrl = uri.toString();
-                                saveReportToDatabase(reportType, location, description, imageUrl, uid);
-                            }
-                        });
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        Toast.makeText(ReportActivity.this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
+                .addOnSuccessListener(taskSnapshot ->
+                        imageRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                            String imageUrl = uri.toString();
+                            saveReportToDatabase(predictedClass, reportType, location, description, imageUrl, uid, embedding);
+                        })
+                )
+                .addOnFailureListener(e ->
+                        Toast.makeText(ReportActivity.this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_SHORT).show()
+                );
     }
 
-    private void saveReportToDatabase(String reportType, String location, String description, String imageUrl, String uid) {
+
+    private void saveReportToDatabase(String predictedClass, String reportType, String location, String description, String imageUrl, String uid, float[] embedding) {
         String reportId = databaseReference.push().getKey();
         if (reportId == null) {
             Toast.makeText(this, "Failed to generate report ID", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        // 1️⃣ 建立報告資料
         Map<String, Object> report = new HashMap<>();
         report.put("uid", uid);
-        report.put("reportType", reportType);
+        report.put("predictedClass", predictedClass);
+        report.put("reportType", reportType); // missing / found
         report.put("location", location);
         report.put("description", description);
         report.put("imageUrl", imageUrl);
         report.put("timestamp", System.currentTimeMillis());
 
+        Map<String, Object> embeddingMap = new HashMap<>();
+        for (int i = 0; i < embedding.length; i++) {
+            embeddingMap.put("e" + i, embedding[i]);
+        }
+        report.put("embedding", embeddingMap);
+
+        // 2️⃣ 儲存至 Firebase
         databaseReference.child(reportId).setValue(report)
                 .addOnSuccessListener(aVoid -> {
                     Toast.makeText(ReportActivity.this, "Report submitted successfully!", Toast.LENGTH_SHORT).show();
@@ -242,9 +251,118 @@ public class ReportActivity extends AppCompatActivity {
                     imageViewPreview.setImageDrawable(null);
                     selectedImageUri = null;
                     selectedBitmap = null;
+
+                    // 3️⃣ 比對另一類型報告的 embedding
+                    DatabaseReference compareRef = database.getReference("user_reports");
+                    compareRef.orderByChild("predictedClass").equalTo(predictedClass)
+                            .addListenerForSingleValueEvent(new ValueEventListener() {
+                                @Override
+                                public void onDataChange(@NonNull DataSnapshot snapshot) {
+                                    float maxSimilarity = -1f;
+                                    String matchedReportId = null;
+
+                                    for (DataSnapshot item : snapshot.getChildren()) {
+                                        // 排除同一份報告
+                                        if (item.getKey().equals(reportId)) continue;
+
+                                        String otherType = item.child("reportType").getValue(String.class);
+                                        if (otherType != null && !otherType.equals(reportType)) {
+                                            Map<String, Object> emb = (Map<String, Object>) item.child("embedding").getValue();
+                                            if (emb == null) continue;
+
+                                            float[] otherEmbedding = new float[128];
+                                            for (int i = 0; i < 128; i++) {
+                                                Object val = emb.get("e" + i);
+                                                otherEmbedding[i] = val instanceof Number ? ((Number) val).floatValue() : 0f;
+                                            }
+
+                                            // 計算餘弦相似度
+                                            float dot = 0f, normA = 0f, normB = 0f;
+                                            for (int i = 0; i < 128; i++) {
+                                                dot += embedding[i] * otherEmbedding[i];
+                                                normA += embedding[i] * embedding[i];
+                                                normB += otherEmbedding[i] * otherEmbedding[i];
+                                            }
+
+                                            float similarity = (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
+                                            if (similarity > maxSimilarity) {
+                                                maxSimilarity = similarity;
+                                                matchedReportId = item.getKey();
+                                            }
+                                        }
+                                    }
+
+                                    // 4️⃣ Log 結果
+                                    if (maxSimilarity > 0.85f) {
+                                        Log.d("SimilarityCheck", "🟢 Possible match found! ReportId: " + matchedReportId + " | Similarity: " + maxSimilarity);
+                                    } else {
+                                        Log.d("SimilarityCheck", "🔍 No strong match found. Max similarity: " + maxSimilarity);
+                                    }
+                                }
+
+                                @Override
+                                public void onCancelled(@NonNull DatabaseError error) {
+                                    Log.e("SimilarityCheck", "Firebase error: " + error.getMessage());
+                                }
+                            });
+
                 })
                 .addOnFailureListener(e -> {
                     Toast.makeText(ReportActivity.this, "Failed to save report: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
     }
+
+
+    private float[] extractEmbedding(Context context, Bitmap bitmap) throws IOException {
+        AssetFileDescriptor fileDescriptor = context.getAssets().openFd("embedding_model_rgb_0511.tflite");
+        FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
+        FileChannel fileChannel = inputStream.getChannel();
+        long startOffset = fileDescriptor.getStartOffset();
+        long declaredLength = fileDescriptor.getDeclaredLength();
+        MappedByteBuffer modelBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
+
+        Interpreter interpreter = new Interpreter(modelBuffer);
+
+        Bitmap resized = Bitmap.createScaledBitmap(bitmap, 224, 224, true);
+
+        float[][][][] imageInput = new float[1][224][224][3];
+        int[] intValues = new int[224 * 224];
+        resized.getPixels(intValues, 0, 224, 0, 0, 224, 224);
+        for (int i = 0; i < 224; ++i) {
+            for (int j = 0; j < 224; ++j) {
+                int pixelValue = intValues[i * 224 + j];
+                imageInput[0][i][j][0] = ((pixelValue >> 16) & 0xFF) / 255.0f;
+                imageInput[0][i][j][1] = ((pixelValue >> 8) & 0xFF) / 255.0f;
+                imageInput[0][i][j][2] = (pixelValue & 0xFF) / 255.0f;
+            }
+        }
+
+        // 顏色平均值 (shape = [1][3])
+        float[][] colorInput = new float[1][3];
+        float r = 0, g = 0, b = 0;
+        for (int i = 0; i < 224; i++) {
+            for (int j = 0; j < 224; j++) {
+                r += imageInput[0][i][j][0];
+                g += imageInput[0][i][j][1];
+                b += imageInput[0][i][j][2];
+            }
+        }
+        int total = 224 * 224;
+        colorInput[0][0] = r / total;
+        colorInput[0][1] = g / total;
+        colorInput[0][2] = b / total;
+
+        // ⚠️ 順序：color 是第一個 input，image 是第二個
+        Object[] inputs = new Object[]{colorInput, imageInput};
+        Map<Integer, Object> outputs = new HashMap<>();
+        float[][] embeddingOutput = new float[1][128];
+        outputs.put(0, embeddingOutput);
+        Log.d("TFLiteDebug", "Input tensor count: " + interpreter.getInputTensorCount());
+        interpreter.runForMultipleInputsOutputs(inputs, outputs);
+
+        return embeddingOutput[0];
+    }
+
+
+
 }
