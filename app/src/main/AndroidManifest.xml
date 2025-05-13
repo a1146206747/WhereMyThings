@@ -37,6 +37,8 @@
             </intent-filter>
 
         </activity>
+        <activity android:name=".ReportListActivity" />
+        <activity android:name=".ReportDetailActivity" />
 
     </application>
 
