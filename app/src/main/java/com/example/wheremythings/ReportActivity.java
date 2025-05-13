@@ -225,11 +225,10 @@ public class ReportActivity extends AppCompatActivity {
             return;
         }
 
-        // 1️⃣ 建立報告資料
         Map<String, Object> report = new HashMap<>();
         report.put("uid", uid);
         report.put("predictedClass", predictedClass);
-        report.put("reportType", reportType); // missing / found
+        report.put("reportType", reportType);
         report.put("location", location);
         report.put("description", description);
         report.put("imageUrl", imageUrl);
@@ -241,7 +240,6 @@ public class ReportActivity extends AppCompatActivity {
         }
         report.put("embedding", embeddingMap);
 
-        // 2️⃣ 儲存至 Firebase
         databaseReference.child(reportId).setValue(report)
                 .addOnSuccessListener(aVoid -> {
                     Toast.makeText(ReportActivity.this, "Report submitted successfully!", Toast.LENGTH_SHORT).show();
@@ -252,66 +250,94 @@ public class ReportActivity extends AppCompatActivity {
                     selectedImageUri = null;
                     selectedBitmap = null;
 
-                    // 3️⃣ 比對另一類型報告的 embedding
-                    DatabaseReference compareRef = database.getReference("user_reports");
-                    compareRef.orderByChild("predictedClass").equalTo(predictedClass)
-                            .addListenerForSingleValueEvent(new ValueEventListener() {
-                                @Override
-                                public void onDataChange(@NonNull DataSnapshot snapshot) {
-                                    float maxSimilarity = -1f;
-                                    String matchedReportId = null;
-
-                                    for (DataSnapshot item : snapshot.getChildren()) {
-                                        // 排除同一份報告
-                                        if (item.getKey().equals(reportId)) continue;
-
-                                        String otherType = item.child("reportType").getValue(String.class);
-                                        if (otherType != null && !otherType.equals(reportType)) {
-                                            Map<String, Object> emb = (Map<String, Object>) item.child("embedding").getValue();
-                                            if (emb == null) continue;
-
-                                            float[] otherEmbedding = new float[128];
-                                            for (int i = 0; i < 128; i++) {
-                                                Object val = emb.get("e" + i);
-                                                otherEmbedding[i] = val instanceof Number ? ((Number) val).floatValue() : 0f;
-                                            }
-
-                                            // 計算餘弦相似度
-                                            float dot = 0f, normA = 0f, normB = 0f;
-                                            for (int i = 0; i < 128; i++) {
-                                                dot += embedding[i] * otherEmbedding[i];
-                                                normA += embedding[i] * embedding[i];
-                                                normB += otherEmbedding[i] * otherEmbedding[i];
-                                            }
-
-                                            float similarity = (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
-                                            if (similarity > maxSimilarity) {
-                                                maxSimilarity = similarity;
-                                                matchedReportId = item.getKey();
-                                            }
-                                        }
-                                    }
-
-                                    // 4️⃣ Log 結果
-                                    if (maxSimilarity > 0.85f) {
-                                        Log.d("SimilarityCheck", "🟢 Possible match found! ReportId: " + matchedReportId + " | Similarity: " + maxSimilarity);
-                                    } else {
-                                        Log.d("SimilarityCheck", "🔍 No strong match found. Max similarity: " + maxSimilarity);
-                                    }
-                                }
-
-                                @Override
-                                public void onCancelled(@NonNull DatabaseError error) {
-                                    Log.e("SimilarityCheck", "Firebase error: " + error.getMessage());
-                                }
-                            });
-
+                    checkSimilarityAndNotify(reportId, predictedClass, reportType, embedding, uid);
                 })
                 .addOnFailureListener(e -> {
                     Toast.makeText(ReportActivity.this, "Failed to save report: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
     }
 
+    private void checkSimilarityAndNotify(String reportId, String predictedClass, String reportType, float[] embedding, String currentUserId) {
+        DatabaseReference compareRef = database.getReference("user_reports");
+
+        compareRef.orderByChild("predictedClass").equalTo(predictedClass)
+                .addListenerForSingleValueEvent(new ValueEventListener() {
+                    @Override
+                    public void onDataChange(@NonNull DataSnapshot snapshot) {
+                        float maxSimilarity = -1f;
+                        String matchedReportId = null;
+
+                        for (DataSnapshot item : snapshot.getChildren()) {
+                            if (item.getKey().equals(reportId)) continue;
+
+                            String otherType = item.child("reportType").getValue(String.class);
+                            if (otherType != null && !otherType.equals(reportType)) {
+                                Map<String, Object> emb = (Map<String, Object>) item.child("embedding").getValue();
+                                if (emb == null) continue;
+
+                                float[] otherEmbedding = new float[128];
+                                for (int i = 0; i < 128; i++) {
+                                    Object val = emb.get("e" + i);
+                                    otherEmbedding[i] = val instanceof Number ? ((Number) val).floatValue() : 0f;
+                                }
+
+                                float dot = 0f, normA = 0f, normB = 0f;
+                                for (int i = 0; i < 128; i++) {
+                                    dot += embedding[i] * otherEmbedding[i];
+                                    normA += embedding[i] * embedding[i];
+                                    normB += otherEmbedding[i] * otherEmbedding[i];
+                                }
+
+                                float similarity = (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
+                                if (similarity > maxSimilarity) {
+                                    maxSimilarity = similarity;
+                                    matchedReportId = item.getKey();
+                                }
+                            }
+                        }
+
+                        if (maxSimilarity > 0.85f && matchedReportId != null) {
+                            Log.d("SimilarityCheck", "🟢 Match found: " + matchedReportId + " (" + maxSimilarity + ")");
+
+                            final String finalMatchedReportId = matchedReportId;
+
+                            database.getReference("user_reports").child(finalMatchedReportId)
+                                    .addListenerForSingleValueEvent(new ValueEventListener() {
+                                        @Override
+                                        public void onDataChange(@NonNull DataSnapshot snapshot) {
+                                            String otherUid = snapshot.child("uid").getValue(String.class);
+                                            if (otherUid == null) return;
+
+                                            long timestamp = System.currentTimeMillis();
+                                            String notificationIdA = database.getReference().push().getKey();
+                                            String notificationIdB = database.getReference().push().getKey();
+
+                                            Map<String, Object> notifData = new HashMap<>();
+                                            notifData.put("yourReportId", reportId);
+                                            notifData.put("matchedReportId", finalMatchedReportId);
+                                            notifData.put("timestamp", timestamp);
+                                            notifData.put("seen", false);
+
+                                            database.getReference("notifications").child(currentUserId).child(notificationIdA).setValue(notifData);
+                                            database.getReference("notifications").child(otherUid).child(notificationIdB).setValue(notifData);
+                                        }
+
+                                        @Override
+                                        public void onCancelled(@NonNull DatabaseError error) {
+                                            Log.e("NotifyUsers", "Failed to get matched report owner.");
+                                        }
+                                    });
+                        } else {
+                            Log.d("SimilarityCheck", "🔍 No strong match found. Max similarity: " + maxSimilarity);
+                        }
+                    }
+
+                    @Override
+                    public void onCancelled(@NonNull DatabaseError error) {
+                        Log.e("SimilarityCheck", "Firebase error: " + error.getMessage());
+                    }
+                });
+    }
 
     private float[] extractEmbedding(Context context, Bitmap bitmap) throws IOException {
         AssetFileDescriptor fileDescriptor = context.getAssets().openFd("embedding_model_rgb_0511.tflite");
@@ -352,7 +378,6 @@ public class ReportActivity extends AppCompatActivity {
         colorInput[0][1] = g / total;
         colorInput[0][2] = b / total;
 
-        // ⚠️ 順序：color 是第一個 input，image 是第二個
         Object[] inputs = new Object[]{colorInput, imageInput};
         Map<Integer, Object> outputs = new HashMap<>();
         float[][] embeddingOutput = new float[1][128];

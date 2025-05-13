@@ -1,14 +1,17 @@
 package com.example.wheremythings;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 
+import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
@@ -35,14 +38,53 @@ public class ProfileActivity extends AppCompatActivity {
 
         showAllUserData();
 
-        reportBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                Intent intent = new Intent(ProfileActivity.this, ReportActivity.class);
-                startActivity(intent);
-            }
+        reportBtn.setOnClickListener(view -> {
+            Intent intent = new Intent(ProfileActivity.this, ReportActivity.class);
+            startActivity(intent);
         });
+
+        // 🔔 檢查通知 + 跳轉
+        String currentUid = FirebaseAuth.getInstance().getCurrentUser().getUid();
+        DatabaseReference notifRef = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/")
+                .getReference("notifications").child(currentUid);
+
+        notifRef.orderByChild("seen").equalTo(false)
+                .limitToFirst(1) // 只抓第一條未讀通知
+                .addListenerForSingleValueEvent(new ValueEventListener() {
+                    @Override
+                    public void onDataChange(@NonNull DataSnapshot snapshot) {
+                        if (snapshot.exists()) {
+                            for (DataSnapshot notifSnap : snapshot.getChildren()) {
+                                String matchedReportId = notifSnap.child("matchedReportId").getValue(String.class);
+
+                                // 將通知設為已讀
+                                notifSnap.getRef().child("seen").setValue(true);
+
+                                // 顯示提示框
+                                new AlertDialog.Builder(ProfileActivity.this)
+                                        .setTitle("Possible Match Found")
+                                        .setMessage("A report similar to yours has been found. Tap OK to view it.")
+                                        .setPositiveButton("OK", (dialog, which) -> {
+                                            // ✅ 跳轉至 ReportDetailActivity
+                                            Intent intent = new Intent(ProfileActivity.this, ReportDetailActivity.class);
+                                            intent.putExtra("reportId", matchedReportId);
+                                            startActivity(intent);
+                                        })
+                                        .setNegativeButton("Later", null)
+                                        .show();
+
+                                break; // 只跳一次
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onCancelled(@NonNull DatabaseError error) {
+                        Log.e("NotificationCheck", "Firebase error: " + error.getMessage());
+                    }
+                });
     }
+
 
     public void showAllUserData() {
         Intent intent = getIntent();
