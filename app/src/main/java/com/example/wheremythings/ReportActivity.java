@@ -14,9 +14,11 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.*;
-import android.content.Context;
 
-
+import com.google.ai.litert.task.vision.ImageSegmenter;
+import com.google.ai.litert.task.vision.ImageSegmenterOptions;
+import com.google.ai.litert.task.vision.ImageProcessingOptions;
+import com.google.ai.litert.task.vision.segmenter.CategoryMask;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
@@ -61,6 +63,9 @@ public class ReportActivity extends AppCompatActivity {
     private DatabaseReference databaseReference;
     private FirebaseAuth mAuth;
 
+    private float[] currentColorInput;
+    private ImageSegmenter imageSegmenter;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -78,6 +83,17 @@ public class ReportActivity extends AppCompatActivity {
         database = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/");
         databaseReference = database.getReference("user_reports");
         mAuth = FirebaseAuth.getInstance();
+
+        // 初始化 ImageSegmenter
+        try {
+            ImageSegmenterOptions options = ImageSegmenterOptions.builder()
+                    .setModelAssetPath("deeplabv3.tflite")
+                    .build();
+            imageSegmenter = ImageSegmenter.createFromOptions(this, options);
+            Log.d("ImageSegmenter", "ImageSegmenter initialized successfully");
+        } catch (Exception e) {
+            Log.e("ImageSegmenter", "Failed to initialize ImageSegmenter: " + e.getMessage());
+        }
 
         uploadPhotoButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -140,11 +156,19 @@ public class ReportActivity extends AppCompatActivity {
         }
 
         try {
+            // 背景移除
+            Bitmap processedBitmap = removeBackground(selectedBitmap);
+            if (processedBitmap == null) {
+                Toast.makeText(this, "Background removal failed", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            selectedBitmap = processedBitmap;
+            imageViewPreview.setImageBitmap(selectedBitmap); // 更新預覽
+
             String prediction = classifyImage(ReportActivity.this, selectedBitmap);
             float[] embedding = extractEmbedding(ReportActivity.this, selectedBitmap);
             Toast.makeText(ReportActivity.this, "AI 判斷結果: " + prediction, Toast.LENGTH_SHORT).show();
 
-            // 🔁 一併傳入 classification 結果與 embedding
             uploadImageToFirebaseStorage(prediction, reportType, location, description, uid, embedding);
 
         } catch (IOException e) {
@@ -152,6 +176,43 @@ public class ReportActivity extends AppCompatActivity {
         }
     }
 
+    private Bitmap removeBackground(Bitmap bitmap) {
+        if (imageSegmenter == null) {
+            Log.e("ImageSegmenter", "ImageSegmenter is not initialized");
+            return null;
+        }
+
+        try {
+            // 預處理圖像
+            Bitmap resized = Bitmap.createScaledBitmap(bitmap, 224, 224, true);
+            TensorImage tensorImage = TensorImage.fromBitmap(resized);
+            ImageProcessingOptions processingOptions = ImageProcessingOptions.builder().build();
+
+            // 執行分割
+            ImageSegmenter.ImageSegmentationResult result = imageSegmenter.segment(tensorImage, processingOptions);
+            CategoryMask categoryMask = result.getCategoryMask();
+
+            // 應用分割結果
+            Bitmap segmentedBitmap = Bitmap.createBitmap(224, 224, Bitmap.Config.ARGB_8888);
+            for (int x = 0; x < 224; x++) {
+                for (int y = 0; y < 224; y++) {
+                    int categoryIndex = categoryMask.getCategoryIndex(x, y);
+                    if (categoryIndex == 1) { // 假設 1 表示前景（根據模型輸出調整）
+                        segmentedBitmap.setPixel(x, y, resized.getPixel(x, y));
+                    } else {
+                        segmentedBitmap.setPixel(x, y, 0x00000000); // 透明背景
+                    }
+                }
+            }
+
+            Log.d("BackgroundRemoval", "Processed bitmap created with size: " + segmentedBitmap.getWidth() + "x" + segmentedBitmap.getHeight());
+            return segmentedBitmap;
+
+        } catch (Exception e) {
+            Log.e("BackgroundRemoval", "Failed to remove background: " + e.getMessage());
+            return null;
+        }
+    }
 
     private String classifyImage(Context context, Bitmap bitmap) throws IOException {
         Log.d("TFLite", "Loading model...");
@@ -183,7 +244,6 @@ public class ReportActivity extends AppCompatActivity {
         float[][] output = new float[1][4];
         interpreter.run(input, output);
 
-        // Log raw output probabilities
         for (int i = 0; i < 4; i++) {
             Log.d("TFLite", "Class " + i + " score: " + output[0][i]);
         }
@@ -200,7 +260,6 @@ public class ReportActivity extends AppCompatActivity {
         return result;
     }
 
-
     private void uploadImageToFirebaseStorage(String predictedClass, String reportType, String location, String description, String uid, float[] embedding) {
         String imageFileName = "images/" + System.currentTimeMillis() + ".jpg";
         StorageReference imageRef = storageReference.child(imageFileName);
@@ -216,7 +275,6 @@ public class ReportActivity extends AppCompatActivity {
                         Toast.makeText(ReportActivity.this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_SHORT).show()
                 );
     }
-
 
     private void saveReportToDatabase(String predictedClass, String reportType, String location, String description, String imageUrl, String uid, float[] embedding) {
         String reportId = databaseReference.push().getKey();
@@ -239,6 +297,17 @@ public class ReportActivity extends AppCompatActivity {
             embeddingMap.put("e" + i, embedding[i]);
         }
         report.put("embedding", embeddingMap);
+
+        if (currentColorInput != null) {
+            Map<String, Object> colorMap = new HashMap<>();
+            colorMap.put("r", currentColorInput[0]);
+            colorMap.put("g", currentColorInput[1]);
+            colorMap.put("b", currentColorInput[2]);
+            report.put("color", colorMap);
+            Log.d("SaveReport", "Saving color: " + Arrays.toString(currentColorInput));
+        } else {
+            Log.e("SaveReport", "currentColorInput is null, color information not saved.");
+        }
 
         databaseReference.child(reportId).setValue(report)
                 .addOnSuccessListener(aVoid -> {
@@ -266,6 +335,7 @@ public class ReportActivity extends AppCompatActivity {
                     public void onDataChange(@NonNull DataSnapshot snapshot) {
                         float maxSimilarity = -1f;
                         String matchedReportId = null;
+                        float[] matchedColorInput = null;
 
                         for (DataSnapshot item : snapshot.getChildren()) {
                             if (item.getKey().equals(reportId)) continue;
@@ -289,15 +359,44 @@ public class ReportActivity extends AppCompatActivity {
                                 }
 
                                 float similarity = (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
-                                if (similarity > maxSimilarity) {
-                                    maxSimilarity = similarity;
-                                    matchedReportId = item.getKey();
+
+                                Map<String, Object> colorMap = (Map<String, Object>) item.child("color").getValue();
+                                if (colorMap != null && currentColorInput != null) {
+                                    float[] otherColorInput = new float[3];
+                                    otherColorInput[0] = colorMap.get("r") != null ? ((Number) colorMap.get("r")).floatValue() : 0f;
+                                    otherColorInput[1] = colorMap.get("g") != null ? ((Number) colorMap.get("g")).floatValue() : 0f;
+                                    otherColorInput[2] = colorMap.get("b") != null ? ((Number) colorMap.get("b")).floatValue() : 0f;
+
+                                    float colorDiff = Math.abs(currentColorInput[0] - otherColorInput[0]) +
+                                            Math.abs(currentColorInput[1] - otherColorInput[1]) +
+                                            Math.abs(currentColorInput[2] - otherColorInput[2]);
+                                    Log.d("SimilarityCheck", "Color Difference: " + colorDiff + ", Current Color: " + Arrays.toString(currentColorInput) + ", Other Color: " + Arrays.toString(otherColorInput));
+
+                                    if (colorDiff > 0.25f) {
+                                        similarity *= 0.5f;
+                                        Log.d("SimilarityCheck", "Adjusted similarity due to color difference: " + similarity);
+                                    }
+
+                                    if (similarity > maxSimilarity) {
+                                        maxSimilarity = similarity;
+                                        matchedReportId = item.getKey();
+                                        matchedColorInput = otherColorInput;
+                                    }
+                                } else {
+                                    Log.d("SimilarityCheck", "ColorInput is null - currentColorInput: " + (currentColorInput != null ? Arrays.toString(currentColorInput) : "null") + ", colorMap: " + (colorMap != null ? colorMap.toString() : "null"));
+                                    if (similarity > maxSimilarity) {
+                                        maxSimilarity = similarity;
+                                        matchedReportId = item.getKey();
+                                    }
                                 }
                             }
                         }
 
                         if (maxSimilarity > 0.85f && matchedReportId != null) {
                             Log.d("SimilarityCheck", "🟢 Match found: " + matchedReportId + " (" + maxSimilarity + ")");
+                            if (matchedColorInput != null) {
+                                Log.d("SimilarityCheck", "Matched Color Input: " + Arrays.toString(matchedColorInput));
+                            }
 
                             final String finalMatchedReportId = matchedReportId;
 
@@ -363,20 +462,26 @@ public class ReportActivity extends AppCompatActivity {
             }
         }
 
-        // 顏色平均值 (shape = [1][3])
         float[][] colorInput = new float[1][3];
         float r = 0, g = 0, b = 0;
+        int foregroundPixels = 0;
         for (int i = 0; i < 224; i++) {
             for (int j = 0; j < 224; j++) {
-                r += imageInput[0][i][j][0];
-                g += imageInput[0][i][j][1];
-                b += imageInput[0][i][j][2];
+                int pixelValue = resized.getPixel(j, i);
+                if ((pixelValue & 0xFF000000) != 0) { // 忽略透明像素
+                    r += imageInput[0][i][j][0];
+                    g += imageInput[0][i][j][1];
+                    b += imageInput[0][i][j][2];
+                    foregroundPixels++;
+                }
             }
         }
-        int total = 224 * 224;
-        colorInput[0][0] = r / total;
-        colorInput[0][1] = g / total;
-        colorInput[0][2] = b / total;
+        colorInput[0][0] = foregroundPixels > 0 ? r / foregroundPixels : 0;
+        colorInput[0][1] = foregroundPixels > 0 ? g / foregroundPixels : 0;
+        colorInput[0][2] = foregroundPixels > 0 ? b / foregroundPixels : 0;
+
+        currentColorInput = colorInput[0];
+        Log.d("ExtractEmbedding", "currentColorInput set to: " + Arrays.toString(currentColorInput));
 
         Object[] inputs = new Object[]{colorInput, imageInput};
         Map<Integer, Object> outputs = new HashMap<>();
@@ -388,6 +493,11 @@ public class ReportActivity extends AppCompatActivity {
         return embeddingOutput[0];
     }
 
-
-
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (imageSegmenter != null) {
+            imageSegmenter.close();
+        }
+    }
 }

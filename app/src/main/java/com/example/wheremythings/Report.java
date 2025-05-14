@@ -12,6 +12,7 @@ public class Report {
     private String imageUrl;
     private long timestamp;
     private HashMap<String, Float> embedding;
+    private HashMap<String, Float> color;
 
     public Report() {}
 
@@ -55,4 +56,12 @@ public class Report {
 
     public HashMap<String, Float> getEmbedding() { return embedding; }
     public void setEmbedding(HashMap<String, Float> embedding) { this.embedding = embedding; }
+
+    public HashMap<String, Float> getColor() {
+        return color;
+    }
+
+    public void setColor(HashMap<String, Float> color) {
+        this.color = color;
+    }
 }

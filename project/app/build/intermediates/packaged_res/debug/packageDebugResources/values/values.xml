@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:ns1="http://schemas.android.com/tools">
+    <color name="black">#FF000000</color>
+    <color name="grey">#696969</color>
+    <color name="lavender">#8692f7</color>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="white">#FFFFFFFF</color>
+    <string name="app_name">WhereMyThings</string>
+    <string name="com.google.firebase.crashlytics.mapping_file_id" ns1:ignore="UnusedResources,TypographyDashes" translatable="false">00000000000000000000000000000000</string>
+    <string name="gcm_defaultSenderId" translatable="false">510867683857</string>
+    <string name="google_api_key" translatable="false">AIzaSyBd6wm-3cQ3326j6HX9ySUxvLdCa4Donco</string>
+    <string name="google_app_id" translatable="false">1:510867683857:android:ce06974a5f727da5f88fb0</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyBd6wm-3cQ3326j6HX9ySUxvLdCa4Donco</string>
+    <string name="google_storage_bucket" translatable="false">wheremything-47fa4.firebasestorage.app</string>
+    <string name="project_id" translatable="false">wheremything-47fa4</string>
+    <style name="Theme.WhereMyThings" parent="Theme.AppCompat.Light.NoActionBar"/>
+</resources>
