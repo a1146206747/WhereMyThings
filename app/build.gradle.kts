@@ -41,10 +41,6 @@ android {
         compose = true
     }
 }
-repositories {
-    google()
-    mavenCentral()
-}
 dependencies {
 
     implementation(libs.androidx.core.ktx)
@@ -81,6 +77,7 @@ dependencies {
     implementation ("org.tensorflow:tensorflow-lite-gpu:2.13.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("com.squareup.picasso:picasso:2.71828")
-    implementation ("com.google.ai.edge.litert:litert-task-vision:0.4.3")
+    // Likely intended for TensorFlow Lite Vision task library
+    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.3")
 
 }
