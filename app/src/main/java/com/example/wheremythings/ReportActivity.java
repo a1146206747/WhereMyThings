@@ -14,11 +14,14 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.*;
+import android.graphics.Color;
 
-import com.google.ai.litert.task.vision.ImageSegmenter;
-import com.google.ai.litert.task.vision.ImageSegmenterOptions;
-import com.google.ai.litert.task.vision.ImageProcessingOptions;
-import com.google.ai.litert.task.vision.segmenter.CategoryMask;
+
+import org.tensorflow.lite.support.image.TensorImage;
+import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter;
+import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter.ImageSegmenterOptions;
+import org.tensorflow.lite.task.vision.segmenter.OutputType;
+import org.tensorflow.lite.task.vision.segmenter.Segmentation;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
@@ -43,7 +46,14 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+
+import org.tensorflow.lite.task.vision.detector.ObjectDetector;
+import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions;
+import org.tensorflow.lite.task.vision.detector.Detection;
+import android.graphics.RectF;
+
 
 public class ReportActivity extends AppCompatActivity {
 
@@ -55,7 +65,7 @@ public class ReportActivity extends AppCompatActivity {
     Button uploadPhotoButton, submitReportButton;
     Uri selectedImageUri = null;
     Bitmap selectedBitmap = null;
-
+    private ImageButton backButton;
     private FirebaseStorage storage;
     private StorageReference storageReference;
     private FirebaseDatabase database;
@@ -64,6 +74,7 @@ public class ReportActivity extends AppCompatActivity {
 
     private float[] currentColorInput;
     private ImageSegmenter imageSegmenter;
+    private ObjectDetector objectDetector;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +87,13 @@ public class ReportActivity extends AppCompatActivity {
         imageViewPreview = findViewById(R.id.imageView4);
         uploadPhotoButton = findViewById(R.id.uploadPhotoButton);
         submitReportButton = findViewById(R.id.submitReportButton);
+        backButton= findViewById(R.id.backButton);
+        backButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
 
         storage = FirebaseStorage.getInstance();
         storageReference = storage.getReference();
@@ -86,9 +104,9 @@ public class ReportActivity extends AppCompatActivity {
         // 初始化 ImageSegmenter（TensorFlow Lite）
         try {
             ImageSegmenterOptions options = ImageSegmenterOptions.builder()
-                    .setModelAssetPath("deeplabv3.tflite")
+                    .setOutputType(OutputType.CATEGORY_MASK)
                     .build();
-            imageSegmenter = ImageSegmenter.createFromOptions(this, options);
+            imageSegmenter = ImageSegmenter.createFromFileAndOptions(this, "deeplabv3.tflite", options);
             Log.d("ImageSegmenter", "ImageSegmenter initialized successfully");
         } catch (Exception e) {
             Log.e("ImageSegmenter", "Failed to initialize ImageSegmenter: " + e.getMessage());
@@ -107,6 +125,9 @@ public class ReportActivity extends AppCompatActivity {
                 submitReport();
             }
         });
+
+        initObjectDetector();
+
     }
 
     private void openImageChooser() {
@@ -155,19 +176,23 @@ public class ReportActivity extends AppCompatActivity {
         }
 
         try {
-            // 背景移除
-            Bitmap processedBitmap = removeBackground(selectedBitmap);
-            if (processedBitmap == null) {
-                Toast.makeText(ReportActivity.this, "Background removal failed", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            selectedBitmap = processedBitmap;
-            imageViewPreview.setImageBitmap(selectedBitmap); // 更新預覽
-
+            // Step 1: 用原圖做分類
             String prediction = classifyImage(ReportActivity.this, selectedBitmap);
-            float[] embedding = extractEmbedding(ReportActivity.this, selectedBitmap);
-            Toast.makeText(ReportActivity.this, "AI 判斷結果: " + prediction, Toast.LENGTH_SHORT).show();
 
+            // Step 2: 目標偵測裁切（不再依賴分類結果，而是確保只偵測一個物品）
+            Bitmap croppedBitmap = detectAndCropTarget(selectedBitmap); // 不依賴分類結果
+            if (croppedBitmap != null) {
+                selectedBitmap = croppedBitmap;
+                imageViewPreview.setImageBitmap(selectedBitmap); // 更新預覽
+            } else {
+                Log.w("SubmitReport", "No object detected for cropping, using original image.");
+            }
+
+            // Step 3: 用裁切後的圖提取 embedding（不再需要背景去除）
+            float[] embedding = extractEmbedding(ReportActivity.this, selectedBitmap);
+
+            // Step 4: 上傳儲存
+            Toast.makeText(ReportActivity.this, "AI 判斷結果: " + prediction, Toast.LENGTH_SHORT).show();
             uploadImageToFirebaseStorage(prediction, reportType, location, description, uid, embedding);
 
         } catch (IOException e) {
@@ -175,43 +200,6 @@ public class ReportActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap removeBackground(Bitmap bitmap) {
-        if (imageSegmenter == null) {
-            Log.e("ImageSegmenter", "ImageSegmenter is not initialized");
-            return null;
-        }
-
-        try {
-            // 預處理圖像
-            Bitmap resized = Bitmap.createScaledBitmap(bitmap, 224, 224, true);
-            TensorImage tensorImage = TensorImage.fromBitmap(resized);
-            ImageProcessingOptions processingOptions = ImageProcessingOptions.builder().build();
-
-            // 執行分割
-            ImageSegmenter.ImageSegmentationResult result = imageSegmenter.segment(tensorImage, processingOptions);
-            CategoryMask categoryMask = result.getCategoryMask();
-
-            // 應用分割結果
-            Bitmap segmentedBitmap = Bitmap.createBitmap(224, 224, Bitmap.Config.ARGB_8888);
-            for (int x = 0; x < 224; x++) {
-                for (int y = 0; y < 224; y++) {
-                    int categoryIndex = categoryMask.getCategoryIndex(x, y);
-                    if (categoryIndex == 1) { // 假設 1 表示前景（根據模型輸出調整）
-                        segmentedBitmap.setPixel(x, y, resized.getPixel(x, y));
-                    } else {
-                        segmentedBitmap.setPixel(x, y, 0x00000000); // 透明背景
-                    }
-                }
-            }
-
-            Log.d("BackgroundRemoval", "Processed bitmap created with size: " + segmentedBitmap.getWidth() + "x" + segmentedBitmap.getHeight());
-            return segmentedBitmap;
-
-        } catch (Exception e) {
-            Log.e("BackgroundRemoval", "Failed to remove background: " + e.getMessage());
-            return null;
-        }
-    }
 
     private String classifyImage(Context context, Bitmap bitmap) throws IOException {
         Log.d("TFLite", "Loading model...");
@@ -464,20 +452,49 @@ public class ReportActivity extends AppCompatActivity {
         float[][] colorInput = new float[1][3];
         float r = 0, g = 0, b = 0;
         int foregroundPixels = 0;
+
+        final float white = 1.0f;
+        final float tolerance = 0.02f;
+
         for (int i = 0; i < 224; i++) {
             for (int j = 0; j < 224; j++) {
-                int pixelValue = resized.getPixel(j, i);
-                if ((pixelValue & 0xFF000000) != 0) { // 忽略透明像素
-                    r += imageInput[0][i][j][0];
-                    g += imageInput[0][i][j][1];
-                    b += imageInput[0][i][j][2];
+                float red = imageInput[0][i][j][0];
+                float green = imageInput[0][i][j][1];
+                float blue = imageInput[0][i][j][2];
+
+                boolean isWhiteBackground =
+                        Math.abs(red - white) < tolerance &&
+                                Math.abs(green - white) < tolerance &&
+                                Math.abs(blue - white) < tolerance;
+
+                if (!isWhiteBackground) {
+                    r += red;
+                    g += green;
+                    b += blue;
                     foregroundPixels++;
                 }
             }
         }
-        colorInput[0][0] = foregroundPixels > 0 ? r / foregroundPixels : 0;
-        colorInput[0][1] = foregroundPixels > 0 ? g / foregroundPixels : 0;
-        colorInput[0][2] = foregroundPixels > 0 ? b / foregroundPixels : 0;
+
+        if (foregroundPixels > 0) {
+            colorInput[0][0] = r / foregroundPixels;
+            colorInput[0][1] = g / foregroundPixels;
+            colorInput[0][2] = b / foregroundPixels;
+        } else {
+            Log.w("ExtractEmbedding", "⚠️ No valid foreground pixels. Fallback to full image average.");
+            float fallbackR = 0, fallbackG = 0, fallbackB = 0;
+            for (int i = 0; i < 224; i++) {
+                for (int j = 0; j < 224; j++) {
+                    fallbackR += imageInput[0][i][j][0];
+                    fallbackG += imageInput[0][i][j][1];
+                    fallbackB += imageInput[0][i][j][2];
+                }
+            }
+            int totalPixels = 224 * 224;
+            colorInput[0][0] = fallbackR / totalPixels;
+            colorInput[0][1] = fallbackG / totalPixels;
+            colorInput[0][2] = fallbackB / totalPixels;
+        }
 
         currentColorInput = colorInput[0];
         Log.d("ExtractEmbedding", "currentColorInput set to: " + Arrays.toString(currentColorInput));
@@ -499,4 +516,50 @@ public class ReportActivity extends AppCompatActivity {
             imageSegmenter.close();
         }
     }
+    private void initObjectDetector() {
+        try {
+            ObjectDetectorOptions options =
+                    ObjectDetectorOptions.builder()
+                            .setMaxResults(3)
+                            .setScoreThreshold(0.5f)
+                            .build();
+            objectDetector = ObjectDetector.createFromFileAndOptions(
+                    this,
+                    "ssd_mobilenet_v1_1_metadata_1.tflite",
+                    options
+            );
+            Log.d("ObjectDetector", "Object detector initialized");
+        } catch (IOException e) {
+            Log.e("ObjectDetector", "Failed to initialize: " + e.getMessage());
+        }
+    }
+    private Bitmap detectAndCropTarget(Bitmap bitmap) {
+        if (objectDetector == null) {
+            Log.e("ObjectDetector", "Detector not initialized");
+            return null;
+        }
+
+        TensorImage image = TensorImage.fromBitmap(bitmap);
+        List<Detection> results = objectDetector.detect(image);
+
+        if (results.isEmpty()) {
+            Log.w("ObjectDetector", "No objects detected in image.");
+            return null;
+        }
+
+        // 直接取第一個物件進行裁切
+        Detection detection = results.get(0);
+        String label = detection.getCategories().get(0).getLabel();
+        Log.d("ObjectDetector", "Detected first object: " + label);
+
+        RectF box = detection.getBoundingBox();
+        int left = Math.max(0, (int) box.left);
+        int top = Math.max(0, (int) box.top);
+        int right = Math.min(bitmap.getWidth(), (int) box.right);
+        int bottom = Math.min(bitmap.getHeight(), (int) box.bottom);
+        return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
+    }
+
+
+
 }
