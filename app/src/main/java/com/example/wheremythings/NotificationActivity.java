@@ -1,11 +1,14 @@
 package com.example.wheremythings;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.AppCompatImageButton;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.view.View;
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.ImageButton;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -25,6 +28,7 @@ public class NotificationActivity extends AppCompatActivity {
     private NotificationAdapter notificationAdapter;
     private List<Notification> notificationList;
     private DatabaseReference notificationsRef;
+    private ImageButton backButtonNotifications;
     private String currentUserId;
 
     @Override
@@ -34,6 +38,14 @@ public class NotificationActivity extends AppCompatActivity {
 
         notificationsRecyclerView = findViewById(R.id.recyclerViewNotifications); // Assuming your RecyclerView has this ID
         notificationsRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+
+        backButtonNotifications = findViewById(R.id.backButtonNotifications);
+        backButtonNotifications.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
         notificationList = new ArrayList<>();
         notificationAdapter = new NotificationAdapter(this, notificationList);
         notificationsRecyclerView.setAdapter(notificationAdapter);

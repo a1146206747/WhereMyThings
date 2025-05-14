@@ -39,7 +39,6 @@ import org.tensorflow.lite.DataType;
 
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
@@ -84,7 +83,7 @@ public class ReportActivity extends AppCompatActivity {
         databaseReference = database.getReference("user_reports");
         mAuth = FirebaseAuth.getInstance();
 
-        // 初始化 ImageSegmenter
+        // 初始化 ImageSegmenter（TensorFlow Lite）
         try {
             ImageSegmenterOptions options = ImageSegmenterOptions.builder()
                     .setModelAssetPath("deeplabv3.tflite")
@@ -159,7 +158,7 @@ public class ReportActivity extends AppCompatActivity {
             // 背景移除
             Bitmap processedBitmap = removeBackground(selectedBitmap);
             if (processedBitmap == null) {
-                Toast.makeText(this, "Background removal failed", Toast.LENGTH_SHORT).show();
+                Toast.makeText(ReportActivity.this, "Background removal failed", Toast.LENGTH_SHORT).show();
                 return;
             }
             selectedBitmap = processedBitmap;

@@ -1,8 +1,10 @@
 package com.example.wheremythings;
 
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -35,14 +37,21 @@ public class ReportDetailActivity extends AppCompatActivity {
     private RecyclerView commentRecyclerView;
     private CommentAdapter commentAdapter;
     private List<Comment> commentList = new ArrayList<>();
-
     private DatabaseReference commentRef;
+    private ImageButton backButtonReportDetail;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_report_detail);
 
+        backButtonReportDetail = findViewById(R.id.backButtonReportDetail);
+        backButtonReportDetail.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
         reportImage = findViewById(R.id.detailReportImage);
         reportType = findViewById(R.id.detailReportType);
         predictedClass = findViewById(R.id.detailPredictedClass);
@@ -58,6 +67,7 @@ public class ReportDetailActivity extends AppCompatActivity {
         commentAdapter = new CommentAdapter(this, commentList, reportId);
         commentRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         commentRecyclerView.setAdapter(commentAdapter);
+
 
         DatabaseReference reportRef = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/")
                 .getReference("user_reports").child(reportId);

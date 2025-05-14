@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 import com.google.firebase.auth.FirebaseAuth;
@@ -23,6 +24,7 @@ public class ProfileActivity extends AppCompatActivity {
     TextView profileName, profileEmail, profilePhone;
     TextView titleName, titleUsername;
     Button reportBtn;
+    private ImageButton backButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,6 +39,14 @@ public class ProfileActivity extends AppCompatActivity {
         reportBtn = findViewById(R.id.reportBtn);
 
         showAllUserData();
+
+        backButton = findViewById(R.id.backButton);
+        backButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
 
         reportBtn.setOnClickListener(view -> {
             Intent intent = new Intent(ProfileActivity.this, ReportActivity.class);
@@ -73,7 +83,7 @@ public class ProfileActivity extends AppCompatActivity {
                                         .setNegativeButton("Later", null)
                                         .show();
 
-                                break; // 只跳一次
+                                break;
                             }
                         }
                     }
