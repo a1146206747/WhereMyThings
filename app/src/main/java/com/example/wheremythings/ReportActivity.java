@@ -3,27 +3,41 @@ package com.example.wheremythings;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.*;
-import android.graphics.Color;
 
+import java.io.File;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import android.os.Environment;
+import androidx.core.content.FileProvider;
 
-import org.tensorflow.lite.support.image.TensorImage;
-import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter;
-import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter.ImageSegmenterOptions;
-import org.tensorflow.lite.task.vision.segmenter.OutputType;
-import org.tensorflow.lite.task.vision.segmenter.Segmentation;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.LocationSettingsResponse;
+import com.google.android.gms.location.SettingsClient;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
@@ -38,7 +52,12 @@ import com.google.firebase.storage.UploadTask;
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.common.FileUtil;
-import org.tensorflow.lite.DataType;
+import org.tensorflow.lite.task.vision.detector.Detection;
+import org.tensorflow.lite.task.vision.detector.ObjectDetector;
+import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions;
+import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter;
+import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter.ImageSegmenterOptions;
+import org.tensorflow.lite.task.vision.segmenter.OutputType;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -47,22 +66,20 @@ import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
-import org.tensorflow.lite.task.vision.detector.ObjectDetector;
-import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions;
-import org.tensorflow.lite.task.vision.detector.Detection;
 import android.graphics.RectF;
-
 
 public class ReportActivity extends AppCompatActivity {
 
     private static final int PICK_IMAGE_REQUEST = 1;
+    private static final int LOCATION_PERMISSION_REQUEST_CODE = 100;
 
     RadioGroup radioGroupType;
     EditText inputLocation, inputDescription;
     ImageView imageViewPreview;
-    Button uploadPhotoButton, submitReportButton;
+    Button uploadPhotoButton, submitReportButton, useCurrentLocationButton;
     Uri selectedImageUri = null;
     Bitmap selectedBitmap = null;
     private ImageButton backButton;
@@ -71,10 +88,14 @@ public class ReportActivity extends AppCompatActivity {
     private FirebaseDatabase database;
     private DatabaseReference databaseReference;
     private FirebaseAuth mAuth;
+    private FusedLocationProviderClient fusedLocationClient;
 
     private float[] currentColorInput;
     private ImageSegmenter imageSegmenter;
     private ObjectDetector objectDetector;
+    private static final int CAMERA_REQUEST_CODE = 2;
+    private static final int CAMERA_PERMISSION_REQUEST_CODE = 101;
+    private Uri photoUri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -87,21 +108,17 @@ public class ReportActivity extends AppCompatActivity {
         imageViewPreview = findViewById(R.id.imageView4);
         uploadPhotoButton = findViewById(R.id.uploadPhotoButton);
         submitReportButton = findViewById(R.id.submitReportButton);
-        backButton= findViewById(R.id.backButton);
-        backButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                finish();
-            }
-        });
+        useCurrentLocationButton = findViewById(R.id.useCurrentLocationButton);
+        backButton = findViewById(R.id.backButton);
 
         storage = FirebaseStorage.getInstance();
         storageReference = storage.getReference();
         database = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/");
         databaseReference = database.getReference("user_reports");
         mAuth = FirebaseAuth.getInstance();
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        // 初始化 ImageSegmenter（TensorFlow Lite）
+        // Initialize ImageSegmenter
         try {
             ImageSegmenterOptions options = ImageSegmenterOptions.builder()
                     .setOutputType(OutputType.CATEGORY_MASK)
@@ -112,45 +129,174 @@ public class ReportActivity extends AppCompatActivity {
             Log.e("ImageSegmenter", "Failed to initialize ImageSegmenter: " + e.getMessage());
         }
 
-        uploadPhotoButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openImageChooser();
-            }
-        });
-
-        submitReportButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                submitReport();
-            }
-        });
-
+        // Initialize ObjectDetector
         initObjectDetector();
 
+        // Back button click listener
+        backButton.setOnClickListener(v -> finish());
+
+        // Upload photo button click listener
+        uploadPhotoButton.setOnClickListener(v -> openImageChooser());
+
+        // Submit report button click listener
+        submitReportButton.setOnClickListener(v -> submitReport());
+
+        // Use current location button click listener
+        useCurrentLocationButton.setOnClickListener(v -> getCurrentLocation());
     }
 
     private void openImageChooser() {
-        Intent intent = new Intent();
-        intent.setType("image/*");
-        intent.setAction(Intent.ACTION_GET_CONTENT);
-        startActivityForResult(Intent.createChooser(intent, "Select Picture"), PICK_IMAGE_REQUEST);
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST_CODE);
+            return;
+        }
+
+        Intent pickIntent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        pickIntent.setType("image/*");
+
+
+        Intent takePhotoIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (takePhotoIntent.resolveActivity(getPackageManager()) != null) {
+
+            File photoFile = null;
+            try {
+                photoFile = createImageFile();
+            } catch (IOException ex) {
+                Toast.makeText(this, "創建照片文件失敗", Toast.LENGTH_SHORT).show();
+            }
+            if (photoFile != null) {
+                photoUri = FileProvider.getUriForFile(this,
+                        "com.example.wheremythings.fileprovider",
+                        photoFile);
+                takePhotoIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri);
+            }
+        }
+
+        Intent chooserIntent = Intent.createChooser(pickIntent, "選擇或拍攝圖片");
+        if (takePhotoIntent.resolveActivity(getPackageManager()) != null) {
+            chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{takePhotoIntent});
+        }
+
+        startActivityForResult(chooserIntent, PICK_IMAGE_REQUEST);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                getCurrentLocation();
+            } else {
+                Toast.makeText(this, "位置權限被拒絕", Toast.LENGTH_SHORT).show();
+            }
+        } else if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                openImageChooser();
+            } else {
+                Toast.makeText(this, "相機權限被拒絕", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private File createImageFile() throws IOException {
+
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_";
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = File.createTempFile(imageFileName, ".jpg", storageDir);
+        return image;
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            selectedImageUri = data.getData();
+        if (resultCode == RESULT_OK && requestCode == PICK_IMAGE_REQUEST) {
+            if (data != null && data.getData() != null) {
+
+                selectedImageUri = data.getData();
+            } else if (photoUri != null) {
+
+                selectedImageUri = photoUri;
+            } else {
+                Toast.makeText(this, "未選擇或拍攝任何圖片", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             try {
                 selectedBitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), selectedImageUri);
                 imageViewPreview.setImageBitmap(selectedBitmap);
             } catch (IOException e) {
                 e.printStackTrace();
-                Toast.makeText(this, "Failed to load image", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "載入圖片失敗", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    private void getCurrentLocation() {
+        // Check if location permissions are granted
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_PERMISSION_REQUEST_CODE);
+            return;
+        }
+
+        // Check location settings
+        LocationRequest locationRequest = LocationRequest.create()
+                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY)
+                .setInterval(10000)
+                .setFastestInterval(5000);
+
+        LocationSettingsRequest.Builder builder = new LocationSettingsRequest.Builder()
+                .addLocationRequest(locationRequest);
+
+        SettingsClient client = LocationServices.getSettingsClient(this);
+        Task<LocationSettingsResponse> task = client.checkLocationSettings(builder.build());
+
+        task.addOnSuccessListener(this, locationSettingsResponse -> {
+            // Location settings are satisfied, proceed to get location
+            fusedLocationClient.getLastLocation()
+                    .addOnSuccessListener(this, location -> {
+                        if (location != null) {
+                            String address = getAddressFromLocation(location.getLatitude(), location.getLongitude());
+                            if (address != null) {
+                                inputLocation.setText(address);
+                            } else {
+                                inputLocation.setText(String.format(Locale.US, "%f, %f", location.getLatitude(), location.getLongitude()));
+                            }
+                        } else {
+                            Toast.makeText(this, "Unable to get location. Please try again.", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(this, e -> {
+                        Toast.makeText(this, "Failed to get location: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    });
+        });
+
+        task.addOnFailureListener(this, e -> {
+            Toast.makeText(this, "Please enable location services to use this feature.", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private String getAddressFromLocation(double latitude, double longitude) {
+        try {
+            Geocoder geocoder = new Geocoder(this, Locale.getDefault());
+            List<Address> addresses = geocoder.getFromLocation(latitude, longitude, 1);
+            if (addresses != null && !addresses.isEmpty()) {
+                Address address = addresses.get(0);
+                StringBuilder addressString = new StringBuilder();
+                for (int i = 0; i <= address.getMaxAddressLineIndex(); i++) {
+                    addressString.append(address.getAddressLine(i));
+                    if (i < address.getMaxAddressLineIndex()) {
+                        addressString.append(", ");
+                    }
+                }
+                return addressString.toString();
+            }
+        } catch (IOException e) {
+            Log.e("Geocoder", "Failed to get address: " + e.getMessage());
+        }
+        return null;
     }
 
     private void submitReport() {
@@ -176,30 +322,21 @@ public class ReportActivity extends AppCompatActivity {
         }
 
         try {
-            // Step 1: 用原圖做分類
-            String prediction = classifyImage(ReportActivity.this, selectedBitmap);
-
-            // Step 2: 目標偵測裁切（不再依賴分類結果，而是確保只偵測一個物品）
-            Bitmap croppedBitmap = detectAndCropTarget(selectedBitmap); // 不依賴分類結果
+            String prediction = classifyImage(this, selectedBitmap);
+            Bitmap croppedBitmap = detectAndCropTarget(selectedBitmap);
             if (croppedBitmap != null) {
                 selectedBitmap = croppedBitmap;
-                imageViewPreview.setImageBitmap(selectedBitmap); // 更新預覽
+                imageViewPreview.setImageBitmap(selectedBitmap);
             } else {
                 Log.w("SubmitReport", "No object detected for cropping, using original image.");
             }
-
-            // Step 3: 用裁切後的圖提取 embedding（不再需要背景去除）
-            float[] embedding = extractEmbedding(ReportActivity.this, selectedBitmap);
-
-            // Step 4: 上傳儲存
-            Toast.makeText(ReportActivity.this, "AI 判斷結果: " + prediction, Toast.LENGTH_SHORT).show();
+            float[] embedding = extractEmbedding(this, selectedBitmap);
+            Toast.makeText(this, "AI Prediction: " + prediction, Toast.LENGTH_SHORT).show();
             uploadImageToFirebaseStorage(prediction, reportType, location, description, uid, embedding);
-
         } catch (IOException e) {
-            Toast.makeText(ReportActivity.this, "模型處理失敗: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Model processing failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
-
 
     private String classifyImage(Context context, Bitmap bitmap) throws IOException {
         Log.d("TFLite", "Loading model...");
@@ -509,13 +646,6 @@ public class ReportActivity extends AppCompatActivity {
         return embeddingOutput[0];
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (imageSegmenter != null) {
-            imageSegmenter.close();
-        }
-    }
     private void initObjectDetector() {
         try {
             ObjectDetectorOptions options =
@@ -533,6 +663,7 @@ public class ReportActivity extends AppCompatActivity {
             Log.e("ObjectDetector", "Failed to initialize: " + e.getMessage());
         }
     }
+
     private Bitmap detectAndCropTarget(Bitmap bitmap) {
         if (objectDetector == null) {
             Log.e("ObjectDetector", "Detector not initialized");
@@ -547,7 +678,6 @@ public class ReportActivity extends AppCompatActivity {
             return null;
         }
 
-        // 直接取第一個物件進行裁切
         Detection detection = results.get(0);
         String label = detection.getCategories().get(0).getLabel();
         Log.d("ObjectDetector", "Detected first object: " + label);
@@ -560,6 +690,14 @@ public class ReportActivity extends AppCompatActivity {
         return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
     }
 
-
-
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (imageSegmenter != null) {
+            imageSegmenter.close();
+        }
+        if (objectDetector != null) {
+            objectDetector.close();
+        }
+    }
 }
