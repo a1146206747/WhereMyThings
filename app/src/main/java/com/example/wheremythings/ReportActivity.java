@@ -2,6 +2,7 @@ package com.example.wheremythings;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -60,7 +61,6 @@ import org.tensorflow.lite.task.vision.segmenter.ImageSegmenter.ImageSegmenterOp
 import org.tensorflow.lite.task.vision.segmenter.OutputType;
 
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
@@ -70,6 +70,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import android.graphics.RectF;
+
+import com.example.wheremythings.NlpExtractor;
 
 public class ReportActivity extends AppCompatActivity {
 
@@ -136,7 +138,14 @@ public class ReportActivity extends AppCompatActivity {
         backButton.setOnClickListener(v -> finish());
 
         // Upload photo button click listener
-        uploadPhotoButton.setOnClickListener(v -> openImageChooser());
+        uploadPhotoButton.setOnClickListener(v -> {
+            new AlertDialog.Builder(ReportActivity.this)
+                    .setTitle("Photo Upload Reminder")
+                    .setMessage("Please ensure your photo contains only ONE item or pet. Photos with multiple items may reduce matching accuracy.")
+                    .setPositiveButton("OK", (dialog, which) -> openImageChooser())
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        });
 
         // Submit report button click listener
         submitReportButton.setOnClickListener(v -> submitReport());
@@ -173,7 +182,7 @@ public class ReportActivity extends AppCompatActivity {
             }
         }
 
-        Intent chooserIntent = Intent.createChooser(pickIntent, "選擇或拍攝圖片");
+        Intent chooserIntent = Intent.createChooser(pickIntent, "Select or take a picture");
         if (takePhotoIntent.resolveActivity(getPackageManager()) != null) {
             chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{takePhotoIntent});
         }
@@ -188,13 +197,13 @@ public class ReportActivity extends AppCompatActivity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 getCurrentLocation();
             } else {
-                Toast.makeText(this, "位置權限被拒絕", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show();
             }
         } else if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 openImageChooser();
             } else {
-                Toast.makeText(this, "相機權限被拒絕", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -220,7 +229,7 @@ public class ReportActivity extends AppCompatActivity {
 
                 selectedImageUri = photoUri;
             } else {
-                Toast.makeText(this, "未選擇或拍攝任何圖片", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "No image selected or captured", Toast.LENGTH_SHORT).show();
                 return;
             }
 
@@ -229,7 +238,7 @@ public class ReportActivity extends AppCompatActivity {
                 imageViewPreview.setImageBitmap(selectedBitmap);
             } catch (IOException e) {
                 e.printStackTrace();
-                Toast.makeText(this, "載入圖片失敗", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Failed to load image", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -251,22 +260,38 @@ public class ReportActivity extends AppCompatActivity {
                 .addLocationRequest(locationRequest);
 
         SettingsClient client = LocationServices.getSettingsClient(this);
-        Task<LocationSettingsResponse> task = client.checkLocationSettings(builder.build());
+        Task task = client.checkLocationSettings(builder.build());
 
         task.addOnSuccessListener(this, locationSettingsResponse -> {
             // Location settings are satisfied, proceed to get location
             fusedLocationClient.getLastLocation()
                     .addOnSuccessListener(this, location -> {
                         if (location != null) {
-                            String address = getAddressFromLocation(location.getLatitude(), location.getLongitude());
+                            double currentLat = location.getLatitude();
+                            double currentLng = location.getLongitude();
+
+                            UserLocationHelper.latitude = currentLat;
+                            UserLocationHelper.longitude = currentLng;
+
+                            String address = getAddressFromLocation(currentLat, currentLng);
                             if (address != null) {
                                 inputLocation.setText(address);
                             } else {
-                                inputLocation.setText(String.format(Locale.US, "%f, %f", location.getLatitude(), location.getLongitude()));
+                                inputLocation.setText(String.format(Locale.US, "%f, %f", currentLat, currentLng));
                             }
+
+                            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                            if (user != null) {
+                                DatabaseReference userRef = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/")
+                                        .getReference("users").child(user.getUid());
+                                userRef.child("lastLat").setValue(currentLat);
+                                userRef.child("lastLng").setValue(currentLng);
+                            }
+
                         } else {
                             Toast.makeText(this, "Unable to get location. Please try again.", Toast.LENGTH_SHORT).show();
                         }
+
                     })
                     .addOnFailureListener(this, e -> {
                         Toast.makeText(this, "Failed to get location: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -280,10 +305,10 @@ public class ReportActivity extends AppCompatActivity {
 
     private String getAddressFromLocation(double latitude, double longitude) {
         try {
-            Geocoder geocoder = new Geocoder(this, Locale.getDefault());
-            List<Address> addresses = geocoder.getFromLocation(latitude, longitude, 1);
+            Geocoder geocoder = new Geocoder(this, Locale.ENGLISH);
+            List addresses = geocoder.getFromLocation(latitude, longitude, 1);
             if (addresses != null && !addresses.isEmpty()) {
-                Address address = addresses.get(0);
+                Address address = (Address) addresses.get(0);
                 StringBuilder addressString = new StringBuilder();
                 for (int i = 0; i <= address.getMaxAddressLineIndex(); i++) {
                     addressString.append(address.getAddressLine(i));
@@ -407,7 +432,7 @@ public class ReportActivity extends AppCompatActivity {
             return;
         }
 
-        Map<String, Object> report = new HashMap<>();
+        Map report = new HashMap<>();
         report.put("uid", uid);
         report.put("predictedClass", predictedClass);
         report.put("reportType", reportType);
@@ -415,15 +440,22 @@ public class ReportActivity extends AppCompatActivity {
         report.put("description", description);
         report.put("imageUrl", imageUrl);
         report.put("timestamp", System.currentTimeMillis());
+        if (UserLocationHelper.latitude != 0.0 && UserLocationHelper.longitude != 0.0) {
+            report.put("latitude", UserLocationHelper.latitude);
+            report.put("longitude", UserLocationHelper.longitude);
+        }
 
-        Map<String, Object> embeddingMap = new HashMap<>();
+
+        // embed embedding vector
+        Map embeddingMap = new HashMap<>();
         for (int i = 0; i < embedding.length; i++) {
             embeddingMap.put("e" + i, embedding[i]);
         }
         report.put("embedding", embeddingMap);
 
+        // Save averaged colour information if available
         if (currentColorInput != null) {
-            Map<String, Object> colorMap = new HashMap<>();
+            Map colorMap = new HashMap<>();
             colorMap.put("r", currentColorInput[0]);
             colorMap.put("g", currentColorInput[1]);
             colorMap.put("b", currentColorInput[2]);
@@ -432,6 +464,12 @@ public class ReportActivity extends AppCompatActivity {
         } else {
             Log.e("SaveReport", "currentColorInput is null, color information not saved.");
         }
+
+        // Run NLP extraction on the description to derive text tags
+        Map<String, String> nlpMap = NlpExtractor.extract(description);
+        report.put("nlpCategory", nlpMap.get("category"));
+        report.put("nlpColor", nlpMap.get("color"));
+        report.put("nlpLocation", nlpMap.get("location"));
 
         databaseReference.child(reportId).setValue(report)
                 .addOnSuccessListener(aVoid -> {
@@ -466,7 +504,7 @@ public class ReportActivity extends AppCompatActivity {
 
                             String otherType = item.child("reportType").getValue(String.class);
                             if (otherType != null && !otherType.equals(reportType)) {
-                                Map<String, Object> emb = (Map<String, Object>) item.child("embedding").getValue();
+                                Map emb = (Map) item.child("embedding").getValue();
                                 if (emb == null) continue;
 
                                 float[] otherEmbedding = new float[128];
@@ -484,7 +522,7 @@ public class ReportActivity extends AppCompatActivity {
 
                                 float similarity = (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
 
-                                Map<String, Object> colorMap = (Map<String, Object>) item.child("color").getValue();
+                                Map colorMap = (Map) item.child("color").getValue();
                                 if (colorMap != null && currentColorInput != null) {
                                     float[] otherColorInput = new float[3];
                                     otherColorInput[0] = colorMap.get("r") != null ? ((Number) colorMap.get("r")).floatValue() : 0f;
@@ -535,7 +573,7 @@ public class ReportActivity extends AppCompatActivity {
                                             String notificationIdA = database.getReference().push().getKey();
                                             String notificationIdB = database.getReference().push().getKey();
 
-                                            Map<String, Object> notifData = new HashMap<>();
+                                            Map notifData = new HashMap<>();
                                             notifData.put("yourReportId", reportId);
                                             notifData.put("matchedReportId", finalMatchedReportId);
                                             notifData.put("timestamp", timestamp);
@@ -552,6 +590,8 @@ public class ReportActivity extends AppCompatActivity {
                                     });
                         } else {
                             Log.d("SimilarityCheck", "🔍 No strong match found. Max similarity: " + maxSimilarity);
+                            // Fallback to NLP based matching when image similarity fails
+                            checkNlpMatchAndNotify(reportId, reportType, currentUserId);
                         }
                     }
 
@@ -637,7 +677,7 @@ public class ReportActivity extends AppCompatActivity {
         Log.d("ExtractEmbedding", "currentColorInput set to: " + Arrays.toString(currentColorInput));
 
         Object[] inputs = new Object[]{colorInput, imageInput};
-        Map<Integer, Object> outputs = new HashMap<>();
+        Map outputs = new HashMap<>();
         float[][] embeddingOutput = new float[1][128];
         outputs.put(0, embeddingOutput);
         Log.d("TFLiteDebug", "Input tensor count: " + interpreter.getInputTensorCount());
@@ -671,14 +711,14 @@ public class ReportActivity extends AppCompatActivity {
         }
 
         TensorImage image = TensorImage.fromBitmap(bitmap);
-        List<Detection> results = objectDetector.detect(image);
+        List results = objectDetector.detect(image);
 
         if (results.isEmpty()) {
             Log.w("ObjectDetector", "No objects detected in image.");
             return null;
         }
 
-        Detection detection = results.get(0);
+        Detection detection = (Detection) results.get(0);
         String label = detection.getCategories().get(0).getLabel();
         Log.d("ObjectDetector", "Detected first object: " + label);
 
@@ -699,5 +739,99 @@ public class ReportActivity extends AppCompatActivity {
         if (objectDetector != null) {
             objectDetector.close();
         }
+    }
+    private void checkNlpMatchAndNotify(String reportId, String reportType, String currentUserId) {
+        DatabaseReference reportsRef = database.getReference("user_reports");
+        reportsRef.child(reportId).addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                // retrieve nlp tags of current report
+                String myCategory = snapshot.child("nlpCategory").getValue(String.class);
+                String myColor = snapshot.child("nlpColor").getValue(String.class);
+                String myLocation = snapshot.child("nlpLocation").getValue(String.class);
+                if (myCategory == null) {
+                    Log.d("NlpMatch", "Current report lacks NLP tags, skipping match");
+                    return;
+                }
+                // determine opposite type
+                String oppositeType = reportType != null && reportType.equalsIgnoreCase("lost") ? "found" : "lost";
+                reportsRef.orderByChild("reportType").equalTo(oppositeType)
+                        .addListenerForSingleValueEvent(new ValueEventListener() {
+                            @Override
+                            public void onDataChange(@NonNull DataSnapshot snap) {
+                                float bestScore = 0f;
+                                String bestId = null;
+                                for (DataSnapshot item : snap.getChildren()) {
+                                    String otherId = item.getKey();
+                                    if (reportId.equals(otherId)) continue;
+                                    String otherCategory = item.child("nlpCategory").getValue(String.class);
+                                    if (otherCategory == null || !myCategory.equalsIgnoreCase(otherCategory)) {
+                                        continue;
+                                    }
+                                    float score = 1.0f;
+                                    String otherColor = item.child("nlpColor").getValue(String.class);
+                                    if (myColor != null && otherColor != null) {
+                                        if (myColor.equalsIgnoreCase(otherColor)) {
+                                            score += 0.5f;
+                                        } else if (NlpExtractor.isSimilarColor(myColor.toLowerCase(Locale.US), otherColor.toLowerCase(Locale.US))) {
+                                            score += 0.3f;
+                                        }
+                                    }
+                                    String otherLoc = item.child("nlpLocation").getValue(String.class);
+                                    if (myLocation != null && otherLoc != null) {
+                                        String myLocLower = myLocation.toLowerCase(Locale.US);
+                                        String otherLocLower = otherLoc.toLowerCase(Locale.US);
+                                        if (myLocLower.equals(otherLocLower) || myLocLower.contains(otherLocLower) || otherLocLower.contains(myLocLower)) {
+                                            score += 0.3f;
+                                        }
+                                    }
+                                    if (score > bestScore) {
+                                        bestScore = score;
+                                        bestId = otherId;
+                                    }
+                                }
+                                if (bestScore >= 1.3f && bestId != null) {
+                                    Log.d("NlpMatch", "🟢 NLP match found: " + bestId + " score " + bestScore);
+                                    final String matchId = bestId;
+                                    // fetch other user's uid
+                                    reportsRef.child(matchId).addListenerForSingleValueEvent(new ValueEventListener() {
+                                        @Override
+                                        public void onDataChange(@NonNull DataSnapshot snapshot2) {
+                                            String otherUid = snapshot2.child("uid").getValue(String.class);
+                                            if (otherUid == null) return;
+                                            long ts = System.currentTimeMillis();
+                                            String notificationIdA = database.getReference().push().getKey();
+                                            String notificationIdB = database.getReference().push().getKey();
+                                            Map notifData = new HashMap<>();
+                                            notifData.put("yourReportId", reportId);
+                                            notifData.put("matchedReportId", matchId);
+                                            notifData.put("timestamp", ts);
+                                            notifData.put("seen", false);
+                                            database.getReference("notifications").child(currentUserId).child(notificationIdA).setValue(notifData);
+                                            database.getReference("notifications").child(otherUid).child(notificationIdB).setValue(notifData);
+                                        }
+
+                                        @Override
+                                        public void onCancelled(@NonNull DatabaseError error) {
+                                            Log.e("NlpMatch", "Failed to fetch opponent UID: " + error.getMessage());
+                                        }
+                                    });
+                                } else {
+                                    Log.d("NlpMatch", "🔍 No NLP match found. Best score: " + bestScore);
+                                }
+                            }
+
+                            @Override
+                            public void onCancelled(@NonNull DatabaseError error) {
+                                Log.e("NlpMatch", "Error scanning for NLP matches: " + error.getMessage());
+                            }
+                        });
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                Log.e("NlpMatch", "Failed to load current report for NLP match: " + error.getMessage());
+            }
+        });
     }
 }

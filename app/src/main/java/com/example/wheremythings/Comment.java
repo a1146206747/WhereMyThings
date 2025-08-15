@@ -8,7 +8,7 @@ public class Comment {
     private String username;
     private String text;
     private long timestamp;
-    private HashMap<String, Reply> replies; // 巢狀留言
+    private HashMap<String, Reply> replies;
 
     public Comment() {}
 

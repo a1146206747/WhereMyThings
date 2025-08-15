@@ -81,7 +81,6 @@ public class CommentAdapter extends RecyclerView.Adapter<CommentAdapter.CommentV
             holder.btnSubmitReply.setVisibility(isVisible ? View.GONE : View.VISIBLE);
         });
 
-        // 提交回覆
         holder.btnSubmitReply.setOnClickListener(v -> {
             String replyText = holder.replyInput.getText().toString().trim();
             if (!replyText.isEmpty()) {

@@ -123,7 +123,6 @@ public class ReportListActivity extends AppCompatActivity {
                     }
                 }
 
-                // 預設顯示 lost 報告並高亮按鈕
                 filterReportsByType("lost");
                 highlightSelectedButton(btnLostReports);
 
@@ -145,7 +144,6 @@ public class ReportListActivity extends AppCompatActivity {
             }
         }
 
-        // 預設不加搜尋關鍵字時顯示全部分類內的項目
         reportList.clear();
         reportList.addAll(currentFilteredList);
         reportAdapter.notifyDataSetChanged();

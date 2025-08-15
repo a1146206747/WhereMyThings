@@ -42,7 +42,6 @@ android {
     }
 }
 dependencies {
-    // 其他依賴保持不變
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -56,7 +55,7 @@ dependencies {
     implementation(libs.firebase.database)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.storage)
-    implementation(libs.androidx.recyclerview) // 使用版本目錄中的 recyclerview
+    implementation(libs.androidx.recyclerview)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -71,10 +70,12 @@ dependencies {
     implementation("androidx.cardview:cardview:1.0.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("com.google.firebase:firebase-database:21.0.0")
+    implementation ("com.google.android.gms:play-services-location:21.0.1")
 
     implementation("org.tensorflow:tensorflow-lite:2.13.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.3")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.13.0")
     implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.3")
     implementation("com.squareup.picasso:picasso:2.71828")
+    implementation("androidx.annotation:annotation:1.7.1")
 }

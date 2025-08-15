@@ -101,7 +101,6 @@ public class ReportDetailActivity extends AppCompatActivity {
                 String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
                 long timestamp = System.currentTimeMillis();
 
-                // 取得使用者名稱
                 DatabaseReference userRef = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/")
                         .getReference("users").child(userId);
 
@@ -113,7 +112,7 @@ public class ReportDetailActivity extends AppCompatActivity {
 
                         Comment comment = new Comment(commentId, userId, username, text, timestamp);
                         commentRef.child(commentId).setValue(comment);
-                        commentInput.setText(""); // 清空輸入框
+                        commentInput.setText("");
                     }
 
                     @Override

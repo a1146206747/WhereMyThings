@@ -14,10 +14,16 @@ public class Report {
     private HashMap<String, Float> embedding;
     private HashMap<String, Float> color;
 
-    public Report() {}
+    private String nlpCategory;
+    private String nlpColor;
+    private String nlpLocation;
 
-    public Report(String id, String uid, String predictedClass, String reportType, String location, 
-                 String description, String imageUrl, long timestamp, HashMap<String, Float> embedding) {
+    public Report() {
+        // Required for calls to DataSnapshot.getValue(Report.class)
+    }
+
+    public Report(String id, String uid, String predictedClass, String reportType, String location,
+                  String description, String imageUrl, long timestamp, HashMap<String, Float> embedding) {
         this.id = id;
         this.uid = uid;
         this.predictedClass = predictedClass;
@@ -29,7 +35,7 @@ public class Report {
         this.embedding = embedding;
     }
 
-    // Getters and Setters
+    // Getters and setters for core fields
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -57,11 +63,20 @@ public class Report {
     public HashMap<String, Float> getEmbedding() { return embedding; }
     public void setEmbedding(HashMap<String, Float> embedding) { this.embedding = embedding; }
 
-    public HashMap<String, Float> getColor() {
-        return color;
-    }
+    public HashMap<String, Float> getColor() { return color; }
+    public void setColor(HashMap<String, Float> color) { this.color = color; }
 
-    public void setColor(HashMap<String, Float> color) {
-        this.color = color;
-    }
+    // Getters and setters for NLP attributes
+
+    public String getNlpCategory() { return nlpCategory; }
+
+    public void setNlpCategory(String nlpCategory) { this.nlpCategory = nlpCategory; }
+
+    public String getNlpColor() { return nlpColor; }
+
+    public void setNlpColor(String nlpColor) { this.nlpColor = nlpColor; }
+
+    public String getNlpLocation() { return nlpLocation; }
+
+    public void setNlpLocation(String nlpLocation) { this.nlpLocation = nlpLocation; }
 }

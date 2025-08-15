@@ -15,7 +15,6 @@ public class HelperClass {
         this.phoneNumber = phoneNumber;
     }
 
-    // Getters 和 Setters
     public String getName() {
         return name;
     }

@@ -96,11 +96,10 @@ public class LoginActivity extends AppCompatActivity {
                     @Override
                     public void onComplete(@NonNull Task<AuthResult> task) {
                         if (task.isSuccessful()) {
-                            // 登入成功
+
                             FirebaseUser firebaseUser = mAuth.getCurrentUser();
                             String userId = firebaseUser.getUid();
 
-                            // 從 Realtime Database 拿其他使用者資料
                             DatabaseReference reference = FirebaseDatabase.getInstance("https://wheremything-47fa4-default-rtdb.asia-southeast1.firebasedatabase.app/")
                                     .getReference("users");
 
